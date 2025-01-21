@@ -6,7 +6,7 @@ import rarfile
 from tkinter import Tk, Label, Button, Entry, filedialog, messagebox
 from tkinter import ttk, BooleanVar
 from tkcalendar import DateEntry
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import threading
 import time
@@ -14,6 +14,9 @@ import time
 SETTINGS_FILE = "settings.json"
 
 POLLING_INTERVAL = 5  # seconds
+
+# Preloading common constants and modules to speed up app execution
+SUPPORTED_FORMATS = {".zip": zipfile.ZipFile, ".tar": tarfile.open, ".tar.gz": tarfile.open, ".tgz": tarfile.open, ".rar": rarfile.RarFile}
 
 def save_settings(settings):
     with open(SETTINGS_FILE, "w") as file:
@@ -89,6 +92,18 @@ class ZipFileProcessor:
         else:
             self.date_picker.config(state="normal")
 
+    def delete_previous_day_files(self, input_dir, target_date):
+        previous_day = target_date - timedelta(days=1)
+        deleted_count = 0
+        for file_name in os.listdir(input_dir):
+            file_path = os.path.join(input_dir, file_name)
+            if os.path.isfile(file_path):
+                file_date = datetime.fromtimestamp(os.path.getmtime(file_path)).date()
+                if file_date == previous_day:
+                    os.remove(file_path)
+                    deleted_count += 1
+        self.log_label.config(text=f"Status: Deleted {deleted_count} file(s) from {previous_day}.")
+
     def process_files(self):
         input_dir = self.input_dir_entry.get()
         output_dir = self.output_dir_entry.get()
@@ -107,23 +122,19 @@ class ZipFileProcessor:
             self.settings["date"] = process_date.strftime("%Y-%m-%d")
             save_settings(self.settings)
 
+            # Delete files from the previous day
+            self.delete_previous_day_files(input_dir, process_date)
+
             processed_count = 0
             for file_name in os.listdir(input_dir):
                 file_path = os.path.join(input_dir, file_name)
                 if os.path.isfile(file_path):
                     file_date = datetime.fromtimestamp(os.path.getmtime(file_path)).date()
                     if file_date == process_date:
-                        if file_name.endswith(".zip"):
-                            with zipfile.ZipFile(file_path, 'r') as archive:
+                        file_ext = os.path.splitext(file_name)[1]
+                        if file_ext in SUPPORTED_FORMATS:
+                            with SUPPORTED_FORMATS[file_ext](file_path, 'r') as archive:
                                 archive.extractall(input_dir)
-                        elif file_name.endswith(".tar") or file_name.endswith(".tar.gz") or file_name.endswith(".tgz"):
-                            with tarfile.open(file_path, 'r') as archive:
-                                archive.extractall(input_dir)
-                        elif file_name.endswith(".rar"):
-                            with rarfile.RarFile(file_path, 'r') as archive:
-                                archive.extractall(input_dir)
-                        else:
-                            continue
 
                         shutil.move(file_path, os.path.join(output_dir, file_name))
                         processed_count += 1
@@ -148,9 +159,9 @@ class ZipFileProcessor:
         self.use_current_date.set(self.settings.get("use_current_date", False))
 
     def monitor_directory(self):
+        input_dir = self.input_dir_entry.get()
+        output_dir = self.output_dir_entry.get()
         while self.running:
-            input_dir = self.input_dir_entry.get()
-            output_dir = self.output_dir_entry.get()
             if input_dir and output_dir:
                 self.process_files()
             time.sleep(POLLING_INTERVAL)
